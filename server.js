@@ -7,6 +7,8 @@ import db from "./db.js";
 dotenv.config();
 const app = express();
 app.use(cors());
+// Add this to handle form-data (key=value) parsing
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 // localhost:5000

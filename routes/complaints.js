@@ -4,6 +4,11 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
+const uploadDir = "uploads/";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
 const router = express.Router();
 router.get("/", async (req, res) => {
   const complaints = await db.query("SELECT * FROM complaint");
@@ -14,7 +19,7 @@ router.get("/", async (req, res) => {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Where to store uploaded files
+    cb(null, uploadDir); // Where to store uploaded files
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -55,6 +60,7 @@ router.post("/", upload.single("attachment"), async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   const { subject, description, status, type } = req.body;
+
   const result = await db.query(
     'UPDATE complaint SET "subject" = $1, "description" = $2, "status" = $3, "type" = $4 WHERE "ComplaintId" = $5 RETURNING *',
     [subject, description, status, type, req.params.id]
