@@ -3,20 +3,7 @@ import db from "../db.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-
-const uploadDir = "uploads/";
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
-
 const router = express.Router();
-router.get("/", async (req, res) => {
-  const complaints = await db.query(
-    'SELECT * FROM complaint ORDER BY "ComplaintId" ASC'
-  );
-
-  res.json(complaints.rows);
-});
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -32,33 +19,46 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// Get complaints by user ID
-router.get("/user/:userId", async (req, res) => {
-  const { userId } = req.params;
+// Get all users
+router.get("/", async (req, res) => {
   const result = await db.query(
-    "SELECT * FROM complaint WHERE user_id = $1 ORDER BY date DESC",
-    [userId]
+    "SELECT id, email, role FROM users ORDER BY id"
   );
   res.json(result.rows);
 });
 
-//
-router.get("/:id", async (req, res) => {
+// Get all complaints for a specific user
+router.get("/:id/complaints", async (req, res) => {
   const { id } = req.params;
-  const complaint = await db.query(
-    'SELECT * FROM complaint WHERE "ComplaintId" = $1',
+  const result = await db.query(
+    "SELECT * FROM complaint WHERE user_id = $1 ORDER BY date DESC",
     [id]
   );
-  if (complaint.rows.length === 0) {
-    return res.status(404).json({ error: "Complaint not found" });
-  }
-  res.rows.length > 0
-    ? res.json(complaint.rows[0])
-    : res.status(404).json({ message: "Complaint not found" });
+  res.json(result.rows);
 });
 
+// Get specific complaint for a user
+// In order to get a specific complaint in a clean way we sent the user ID in the header, to not do /1/1 for example
+router.get("/:id", async (req, res) => {
+  const { id } = req.params;
+  const user_id = req.headers["x-user-id"]; // simulate logged-in user
+
+  const complaint = await db.query(
+    'SELECT * FROM complaint WHERE "ComplaintId" = $1 AND user_id = $2',
+    [id, user_id]
+  );
+
+  if (complaint.rows.length === 0) {
+    return res.status(404).json({ error: "Complaint not found or not yours" });
+  }
+
+  res.json(complaint.rows[0]);
+});
+
+// Create a new complaint for a user
 router.post("/", upload.single("attachment"), async (req, res) => {
-  const { subject, description, status, type, priority, user_id } = req.body;
+  const { subject, description, status, type, priority } = req.body;
+  const user_id = req.headers["x-user-id"];
   const filePath = req.file ? req.file.path : null;
   const date = new Date();
 
@@ -70,6 +70,7 @@ router.post("/", upload.single("attachment"), async (req, res) => {
   res.json(createdComplaint.rows[0]);
 });
 
+// Update a complaint for a user
 router.put("/:id", upload.single("attachment"), async (req, res) => {
   const { subject, description, status, type, priority } = req.body;
   const filePath = req.file ? req.file.path : null;
@@ -124,78 +125,18 @@ router.put("/:id", upload.single("attachment"), async (req, res) => {
   res.json(result.rows[0]);
 });
 
+// Delete a complaint for a user
 router.delete("/:id", async (req, res) => {
+  const user_id = req.headers["x-user-id"];
+
   const result = await db.query(
-    'DELETE FROM complaint WHERE "ComplaintId" = $1 RETURNING *',
-    [req.params.id]
+    'DELETE FROM complaint WHERE "ComplaintId" = $1 AND user_id = $2 RETURNING *',
+    [req.params.id, user_id]
   );
+
   result.rows.length > 0
     ? res.json({ deleted: result.rows[0] })
     : res.status(404).json({ message: "Complaint not found" });
-});
-
-router.delete("/:id/attachment", async (req, res) => {
-  const { id } = req.params;
-
-  // Step 1: Get the file path from DB
-  const result = await db.query(
-    'SELECT attachment_path FROM complaint WHERE "ComplaintId" = $1',
-    [id]
-  );
-
-  if (result.rows.length === 0) {
-    return res.status(404).json({ error: "Complaint not found." });
-  }
-
-  const filePath = result.rows[0].attachment_path;
-
-  if (!filePath) {
-    return res.status(400).json({ message: "No attachment to delete." });
-  }
-
-  // Step 2: Delete the file from disk(from uploads folder)
-  const fullPath = path.resolve(filePath);
-
-  if (fs.existsSync(fullPath)) {
-    fs.unlink(fullPath, (err) => {
-      if (err) {
-        console.error("File deletion failed:", err);
-        return res.status(500).json({ error: "Failed to delete the file." });
-      }
-    });
-  }
-
-  // Step 3: Remove the path from the DB
-  await db.query(
-    'UPDATE complaint SET attachment_path = NULL WHERE "ComplaintId" = $1',
-    [id]
-  );
-
-  res.json({ message: "Attachment deleted successfully." });
-});
-
-//feedback and rating
-router.put("/:id/feedback", async (req, res) => {
-  const { rating, comment } = req.body;
-  const { id } = req.params;
-
-  if (!rating || rating < 1 || rating > 5) {
-    return res.status(400).json({ error: "Rating must be between 1 and 5." });
-  }
-
-  const result = await db.query(
-    'UPDATE complaint SET rating = $1, feedback_comment = $2 WHERE "ComplaintId" = $3 RETURNING *',
-    [rating, comment || null, id]
-  );
-
-  if (result.rows.length === 0) {
-    return res.status(404).json({ error: "Complaint not found." });
-  }
-
-  res.json({
-    message: "Feedback submitted successfully",
-    complaint: result.rows[0],
-  });
 });
 
 export default router;
